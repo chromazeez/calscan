@@ -93,7 +93,8 @@
 const { useState, useRef, useCallback, useEffect } = React;
 
 const PROFILE = { calories:2550, protein:140, carbs:290, fat:70 };
-const GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_MODELS = ['gemini-2.0-flash-lite','gemini-1.5-flash-latest','gemini-1.5-flash','gemini-pro-vision'];
+const geminiUrl = (model,key) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
 const load = (k,d) => { try { return JSON.parse(localStorage.getItem(k)||JSON.stringify(d)); } catch { return d; } };
 const save = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} };
@@ -273,12 +274,18 @@ function ActivityLogger({ apiKey, onBurn, onClose }) {
     setLoading(true); setError('');
     try {
       const prompt = `You are a precise exercise calorie calculator. User: 17yo male, 5'5", 130 lbs, lean/athletic. Estimate calories burned for: "${text}". Respond ONLY with valid JSON (no markdown, no backticks): {"activity":"short label","calories_burned":number,"duration_minutes":number,"notes":"brief note"}. Be realistic — 130 lbs is light so burns are lower than average.`;
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,maxOutputTokens:300}})
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      let data = null;
+      for (const model of GEMINI_MODELS) {
+        try {
+          const resp = await fetch(geminiUrl(model, apiKey),{
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.2,maxOutputTokens:300}})
+          });
+          if (!resp.ok) continue;
+          data = await resp.json(); break;
+        } catch(e) { continue; }
+      }
+      if (!data) throw new Error('No model worked');
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const clean = raw.replace(/```json|```/g,'').trim();
       onBurn(JSON.parse(clean));
@@ -422,26 +429,34 @@ function App() {
         ? `You are a nutrition label reader. This image shows a nutrition facts label, barcode, or product packaging. Extract the exact nutritional information. If you see a nutrition facts panel use those exact numbers. If only a barcode or product name is visible, use your knowledge of the product. Respond ONLY with valid JSON (no markdown, no backticks, no explanation): {"name":"exact product name and brand","serving":"serving size from label","calories":number,"protein":number,"carbs":number,"fat":number,"confidence":"high|medium|low","notes":"state if read directly from label or estimated"}`
         : `You are a precise nutrition AI. Analyze this food image${userCaption?` (user says: "${userCaption}")`:''} and estimate the nutritional content. ${userCaption?'Use the user description to improve accuracy.':''} Respond ONLY with valid JSON (no markdown, no backticks, no explanation): {"name":"specific food name","serving":"estimated portion size","calories":number,"protein":number,"carbs":number,"fat":number,"confidence":"high|medium|low","notes":"brief accuracy note"}. Be realistic and accurate. Combine multiple foods into one entry.`;
 
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          contents:[{parts:[
-            {inline_data:{mime_type:mimeType,data:base64Data}},
-            {text:prompt}
-          ]}],
-          generationConfig:{temperature:0.1, maxOutputTokens:500}
-        })
-      });
-
-      if (!resp.ok) {
-        const errData = await resp.json().catch(()=>({}));
-        const msg = errData.error?.message || `HTTP ${resp.status}`;
-        if (resp.status===400) throw new Error('Invalid API key — check your key in Settings (⚙️)');
-        if (resp.status===403) throw new Error('API key rejected — make sure you enabled Gemini API at aistudio.google.com');
-        throw new Error(msg);
+      // Try each model until one works (handles both AIza and AQ. key formats)
+      let data = null;
+      let lastErr = '';
+      for (const model of GEMINI_MODELS) {
+        try {
+          const resp = await fetch(geminiUrl(model, apiKey),{
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              contents:[{parts:[
+                {inline_data:{mime_type:mimeType,data:base64Data}},
+                {text:prompt}
+              ]}],
+              generationConfig:{temperature:0.1, maxOutputTokens:500}
+            })
+          });
+          if (resp.status===429) { lastErr='Quota exceeded — wait a moment and try again'; break; }
+          if (resp.status===400||resp.status===403) {
+            const e = await resp.json().catch(()=>({}));
+            lastErr = e.error?.message || `HTTP ${resp.status}`;
+            if (lastErr.includes('API_KEY_INVALID')||lastErr.includes('not found')) continue;
+            break;
+          }
+          if (!resp.ok) { lastErr=`HTTP ${resp.status}`; continue; }
+          data = await resp.json();
+          break;
+        } catch(e) { lastErr=e.message; continue; }
       }
-
-      const data = await resp.json();
+      if (!data) throw new Error(lastErr || 'All models failed — check your API key in ⚙️');
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const clean = raw.replace(/```json|```/g,'').trim();
       const parsed = JSON.parse(clean);
