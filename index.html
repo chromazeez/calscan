@@ -93,7 +93,7 @@
 const { useState, useRef, useCallback, useEffect } = React;
 
 const PROFILE = { calories:2550, protein:140, carbs:290, fat:70 };
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-1.5-flash';
 
 const load = (k,d) => { try { return JSON.parse(localStorage.getItem(k)||JSON.stringify(d)); } catch { return d; } };
 const save = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} };
@@ -705,7 +705,7 @@ function App() {
       </div>
 
       <div style={{textAlign:'center',padding:'10px 20px 16px',borderTop:'1px solid #0d0d0d'}}>
-        <span style={{fontSize:10,color:'#111',fontFamily:'monospace',letterSpacing:'0.05em'}}>CALSCAN · GEMINI AI · TARGET 2,550 KCAL</span>
+        <span style={{fontSize:10,color:'#111',fontFamily:'monospace',letterSpacing:'0.05em'}}>CALSCAN · GEMINI 1.5 FLASH · TARGET 2,550 KCAL</span>
       </div>
     </div>
   );
